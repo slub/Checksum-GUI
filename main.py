@@ -44,11 +44,12 @@ class ChecksumWorker(QThread):
     progress = pyqtSignal(int)
     summary = pyqtSignal(str, dict)
 
-    def __init__(self, files: list[Path], folder: Path | None, parent=None, algorithm="sha512"):
+    def __init__(self, files: list[Path], folder: Path | None, parent=None, algorithm="sha512", preview_only=False):
         super().__init__(parent)
         self.files = files
         self.folder = folder
         self.algorithm = algorithm
+        self.preview_only = preview_only
 
     def run(self):
         completed = errors = 0
@@ -70,6 +71,13 @@ class ChecksumWorker(QThread):
                         if not path.is_symlink() and path.is_file():
                             files.append(path)
             self.discovered.emit(len(files))
+            for path in files:
+                if self.isInterruptionRequested():
+                    raise Cancelled()
+                self.result.emit(str(path), "", "")
+            if self.preview_only:
+                self.summary.emit("Ready", {})
+                return
             for index, path in enumerate(files, 1):
                 if self.isInterruptionRequested():
                     raise Cancelled()
@@ -226,7 +234,7 @@ class MainWindow(QMainWindow):
                 self.files = list(paths)
             self.update_selection()
             self.selection.setToolTip("\n".join(map(str, paths)))
-            self.reset_results()
+            self.reset_results(preview_folder=False)
             QTimer.singleShot(0, self.start)
 
     def tr_message(self, message, **values):
@@ -321,10 +329,15 @@ class MainWindow(QMainWindow):
             self.selection.setToolTip(name)
             self.reset_results()
 
-    def reset_results(self):
+    def reset_results(self, preview_folder=True):
         self.taskbar.update()
+        pending_paths = list(self.files)
+        if self.folder is not None and not preview_folder:
+            pending_paths.extend(Path(path) for path in self.result_rows if Path(path) not in pending_paths)
         self.table.setRowCount(0)
         self.result_rows.clear()
+        for path in pending_paths:
+            self.add_result(str(path), "", "")
         self.copy.setEnabled(False)
         self.save.setEnabled(False)
         self.compare.setEnabled(False)
@@ -332,6 +345,28 @@ class MainWindow(QMainWindow):
         self.progress.setValue(0)
         self.calculate.setEnabled(bool(self.files) or self.folder is not None)
         self.set_status("Ready")
+        if self.folder is not None and preview_folder:
+            for widget in (self.select_files, self.select_folder, self.algorithm):
+                widget.setEnabled(False)
+            self.calculate.setText(self.tr_message("Cancel"))
+            self.progress.setRange(0, 0)
+            self.set_status("Discovering files…")
+            self.worker = ChecksumWorker(list(self.files), self.folder, self, preview_only=True)
+            self.worker.result.connect(self.add_result)
+            self.worker.summary.connect(self.set_status)
+            self.worker.finished.connect(self.preview_finished)
+            self.worker.start()
+
+    def preview_finished(self):
+        self.worker.deleteLater()
+        self.worker = None
+        for widget in (self.select_files, self.select_folder, self.algorithm, self.calculate):
+            widget.setEnabled(True)
+        self.calculate.setText(self.tr_message("Calculate"))
+        self.progress.setRange(0, 1)
+        self.progress.setValue(0)
+        if self.close_pending:
+            self.close()
 
     def toggle_calculation(self):
         if self.worker is None:
@@ -340,7 +375,7 @@ class MainWindow(QMainWindow):
             self.stop()
 
     def start(self):
-        self.reset_results()
+        self.reset_results(preview_folder=False)
         for button in (self.select_files, self.select_folder, self.algorithm):
             button.setEnabled(False)
         self.calculate.setText(self.tr_message("Cancel"))

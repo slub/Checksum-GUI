@@ -9,7 +9,7 @@ from PyQt6.QtGui import QDragEnterEvent, QDropEvent
 from PyQt6.QtWidgets import QApplication
 
 from checksums import Cancelled, checksum_file
-from main import MainWindow, VERSION, parse_arguments
+from main import ChecksumWorker, MainWindow, VERSION, parse_arguments
 from taskbar import TaskbarProgress
 
 
@@ -39,11 +39,20 @@ class ChecksumTests(unittest.TestCase):
             drop([QUrl.fromLocalFile(str(p)) for p in (first, second, first)], True)
             self.assertEqual(window.files, [first, second])
             self.assertIsNone(window.folder)
-            self.assertEqual(window.table.rowCount(), 0)
+            self.assertEqual(window.table.rowCount(), 2)
+            self.assertEqual([window.table.item(row, 0).text() for row in range(2)],
+                             [first.name, second.name])
+            self.assertEqual(window.results_text(), "")
+            self.assertFalse(window.copy.isEnabled())
+            window.algorithm.setCurrentText("MD5")
+            self.assertEqual(window.table.rowCount(), 2)
+            self.assertEqual(window.results_text(), "")
             self.assertTrue(window.calculate.isEnabled())
             drop([QUrl.fromLocalFile(str(root))], True)
             self.assertEqual(window.folder, root)
             self.assertEqual(window.files, [])
+            self.wait_for_preview(window, app)
+            self.assertEqual(window.table.rowCount(), 2)
             for urls in (
                 [QUrl("https://example.com/file")],
                 [QUrl.fromLocalFile(str(root)), QUrl.fromLocalFile(str(first))],
@@ -61,6 +70,56 @@ class ChecksumTests(unittest.TestCase):
         notifications = patch("main.DesktopNotifications.show")
         notifications.start()
         self.addCleanup(notifications.stop)
+
+    def wait_for_preview(self, window, app):
+        self.assertIsNotNone(window.worker)
+        self.assertTrue(window.worker.wait(5000))
+        app.processEvents()
+        self.assertIsNone(window.worker)
+
+    def test_folder_preview_does_not_calculate(self):
+        app = QApplication.instance() or QApplication([])
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "nested").mkdir()
+            (root / "first").write_bytes(b"abc")
+            (root / "nested" / "second").write_bytes(b"def")
+            (root / "link").symlink_to(root / "first")
+            window = MainWindow()
+            with patch("main.QFileDialog.getExistingDirectory", return_value=str(root)), \
+                    patch("main.checksum_file") as checksum:
+                window.choose_folder()
+                self.wait_for_preview(window, app)
+                checksum.assert_not_called()
+            self.assertEqual([window.table.item(row, 0).text() for row in range(2)],
+                             ["first", str(Path("nested") / "second")])
+            self.assertEqual(window.results_text(), "")
+            self.assertTrue(window.calculate.isEnabled())
+            for button in (window.copy, window.save, window.compare):
+                self.assertFalse(button.isEnabled())
+            with patch("main.ChecksumWorker.start"):
+                window.start()
+                self.assertEqual(window.table.rowCount(), 2)
+                window.finished()
+            window.close()
+
+    def test_worker_lists_all_files_before_hashing(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            for name in ("first", "second"):
+                (root / name).write_bytes(b"abc")
+            worker = ChecksumWorker([], root)
+            results = []
+            worker.result.connect(lambda *result: results.append(result))
+
+            def calculate(path, *args, **kwargs):
+                pending = [result[0] for result in results if result[2] == "Not calculated"]
+                self.assertEqual(pending, [str(root / "first"), str(root / "second")])
+                return "digest"
+
+            with patch("main.checksum_file", side_effect=calculate) as checksum:
+                worker.run()
+            self.assertEqual(checksum.call_count, 2)
 
     def test_completion_notification_only_when_unfocused(self):
         app = QApplication.instance() or QApplication([])
@@ -232,7 +291,9 @@ class ChecksumTests(unittest.TestCase):
             window.retranslate_ui()
             self.assertIn("1 error(s)", window.status.text())
             window.algorithm.setCurrentText("SHA1")
-            self.assertEqual(window.table.rowCount(), 0)
+            self.wait_for_preview(window, app)
+            self.assertEqual(window.table.rowCount(), 2)
+            self.assertEqual(window.table.item(0, 1).text(), "")
             self.assertEqual(window.calculate.text(), "Calculate")
             self.assertFalse(window.copy.isEnabled())
             window.close()

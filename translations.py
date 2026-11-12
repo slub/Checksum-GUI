@@ -33,7 +33,6 @@ CATALOGS = {
         "Different": "Abweichend",
         "Current only": "Nur aktuell",
         "Saved only": "Nur gespeichert",
-        "Not calculated": "Nicht berechnet",
         "Ambiguous filename": "Mehrdeutiger Dateiname",
         "Invalid results file. Expected checksum, two spaces, and file path on each line.": "Ungültige Ergebnisdatei. Jede Zeile muss eine Prüfsumme, zwei Leerzeichen und einen Dateipfad enthalten.",
         "The results file contains multiple checksum algorithms.": "Die Ergebnisdatei enthält mehrere Prüfsummenalgorithmen.",

@@ -3,6 +3,7 @@
 An intuitive Python 3.10+/Qt6 desktop app for calculating SHA512, SHA1 or MD5
 checksums of multiple files or all files inside a directory.
 Changing the algorithm or selecting new files/folder clears previous results.
+Selecting a folder scans it in the background and lists its files, including subfolders, before you click Calculate. Symbolic links are skipped.
 
 Pass files or one folder on the command line to start calculating automatically:
 
