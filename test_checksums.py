@@ -103,6 +103,28 @@ class ChecksumTests(unittest.TestCase):
                 window.finished()
             window.close()
 
+    def test_calculate_reuses_preview_files(self):
+        app = QApplication.instance() or QApplication([])
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            first = root / "first"
+            first.write_bytes(b"abc")
+            window = MainWindow()
+            with patch("main.QFileDialog.getExistingDirectory", return_value=str(root)):
+                window.choose_folder()
+                self.wait_for_preview(window, app)
+            (root / "added_after_preview").write_bytes(b"new")
+            for _ in range(2):
+                with patch("main.os.walk", side_effect=AssertionError("Unexpected rescan")) as walk, \
+                        patch.object(window.table, "setRowCount") as reset_rows:
+                    window.calculate.click()
+                    self.wait_for_preview(window, app)
+                    walk.assert_not_called()
+                    reset_rows.assert_not_called()
+                self.assertEqual(window.table.rowCount(), 1)
+                self.assertEqual(window.table.item(0, 1).text(), hashlib.sha512(b"abc").hexdigest())
+            window.close()
+
     def test_worker_lists_all_files_before_hashing(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

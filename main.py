@@ -71,10 +71,11 @@ class ChecksumWorker(QThread):
                         if not path.is_symlink() and path.is_file():
                             files.append(path)
             self.discovered.emit(len(files))
-            for path in files:
-                if self.isInterruptionRequested():
-                    raise Cancelled()
-                self.result.emit(str(path), "", "")
+            if self.preview_only or self.folder is not None:
+                for path in files:
+                    if self.isInterruptionRequested():
+                        raise Cancelled()
+                    self.result.emit(str(path), "", "")
             if self.preview_only:
                 self.summary.emit("Ready", {})
                 return
@@ -155,6 +156,7 @@ class MainWindow(QMainWindow):
         self.folder: Path | None = None
         self.worker: ChecksumWorker | None = None
         self.result_rows: dict[str, int] = {}
+        self.preview_files: list[Path] | None = None
         self.close_pending = False
         self.status_message = ("Ready", {})
         self.language_code = detect_language()
@@ -331,6 +333,7 @@ class MainWindow(QMainWindow):
 
     def reset_results(self, preview_folder=True):
         self.taskbar.update()
+        self.preview_files = None
         pending_paths = list(self.files)
         if self.folder is not None and not preview_folder:
             pending_paths.extend(Path(path) for path in self.result_rows if Path(path) not in pending_paths)
@@ -351,11 +354,17 @@ class MainWindow(QMainWindow):
             self.calculate.setText(self.tr_message("Cancel"))
             self.progress.setRange(0, 0)
             self.set_status("Discovering files…")
+            self.preview_files = []
             self.worker = ChecksumWorker(list(self.files), self.folder, self, preview_only=True)
-            self.worker.result.connect(self.add_result)
+            self.worker.result.connect(self.add_preview_result)
             self.worker.summary.connect(self.set_status)
             self.worker.finished.connect(self.preview_finished)
             self.worker.start()
+
+    def add_preview_result(self, path, digest, status):
+        if not status:
+            self.preview_files.append(Path(path))
+        self.add_result(path, digest, status)
 
     def preview_finished(self):
         self.worker.deleteLater()
@@ -375,15 +384,27 @@ class MainWindow(QMainWindow):
             self.stop()
 
     def start(self):
-        self.reset_results(preview_folder=False)
+        files = list(self.preview_files if self.preview_files is not None else self.files)
+        folder = self.folder if self.preview_files is None else None
+        for row in range(self.table.rowCount()):
+            for column in (1, 2):
+                item = self.table.item(row, column)
+                item.setText("")
+                item.setToolTip("")
+                item.setData(Qt.ItemDataRole.UserRole, "")
+        for button in (self.copy, self.save, self.compare):
+            button.setEnabled(False)
         for button in (self.select_files, self.select_folder, self.algorithm):
             button.setEnabled(False)
         self.calculate.setText(self.tr_message("Cancel"))
         self.progress.setRange(0, 0)
         self.taskbar.update(total=0, active=True)
-        self.set_status("Discovering files…")
+        if folder is not None:
+            self.set_status("Discovering files…")
+        else:
+            self.set_total(len(files))
         self.worker = ChecksumWorker(
-            list(self.files), self.folder, self, algorithm=self.algorithm.currentText().lower()
+            files, folder, self, algorithm=self.algorithm.currentText().lower()
         )
         self.worker.discovered.connect(self.set_total)
         self.worker.result.connect(self.add_result)
