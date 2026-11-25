@@ -21,7 +21,7 @@ from results import parse_results, compare_results
 from config import default_auto_save_name, load_config, save_config
 
 
-VERSION = "2.0.0"
+VERSION = "2.1.0"
 
 def parse_arguments(argv=None):
     parser = argparse.ArgumentParser(description="Calculate checksums for files or a folder.")
