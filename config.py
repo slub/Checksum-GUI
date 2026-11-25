@@ -24,7 +24,7 @@ def default_auto_save_name(algorithm: str) -> str:
 
 def load_config() -> dict:
     """Return validated settings; missing or invalid values fall back to defaults."""
-    config = {"algorithm": "sha512", "auto_save": False, "auto_save_name": ""}
+    config = {"algorithm": "sha512", "recursive": True, "auto_save": False, "auto_save_name": ""}
     try:
         stored = json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
     except (OSError, ValueError):
@@ -33,8 +33,9 @@ def load_config() -> dict:
         stored = {}
     if str(stored.get("algorithm", "")).lower() in ALGORITHMS:
         config["algorithm"] = stored["algorithm"].lower()
-    if isinstance(stored.get("auto_save"), bool):
-        config["auto_save"] = stored["auto_save"]
+    for key in ("recursive", "auto_save"):
+        if isinstance(stored.get(key), bool):
+            config[key] = stored[key]
     if isinstance(stored.get("auto_save_name"), str):
         config["auto_save_name"] = stored["auto_save_name"].strip()
     if not config["auto_save_name"]:

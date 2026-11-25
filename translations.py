@@ -43,6 +43,8 @@ CATALOGS = {
         "Status": "Status",
         "Ready": "Bereit",
         "{count} file(s) selected": "{count} Datei(en) ausgewählt",
+        "Include subfolders": "Unterordner einbeziehen",
+        "Folder: {path} (without subfolders; symbolic links skipped)": "Ordner: {path} (ohne Unterordner; symbolische Links werden übersprungen)",
         "Folder: {path} (including subfolders; symbolic links skipped)": "Ordner: {path} (einschließlich Unterordner; symbolische Links werden übersprungen)",
         "Discovering files…": "Dateien werden gesucht…",
         "Calculating {algorithm} for {count} file(s)…": "{algorithm} wird für {count} Datei(en) berechnet…",

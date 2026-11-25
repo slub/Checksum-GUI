@@ -25,7 +25,8 @@ VERSION = "2.0.0"
 
 def parse_arguments(argv=None):
     parser = argparse.ArgumentParser(description="Calculate checksums for files or a folder.")
-    parser.add_argument("paths", nargs="*", type=Path, help="Files or one folder (including subfolders)")
+    parser.add_argument("paths", nargs="*", type=Path,
+                        help="Files or one folder (subfolders as last chosen in the GUI)")
     parser.add_argument("-a", "--algorithm", type=str.lower,
                         choices=("sha512", "sha1", "md5"), default=None,
                         help="Defaults to the last algorithm used in the GUI")
@@ -55,7 +56,7 @@ class ChecksumWorker(QThread):
     summary = pyqtSignal(str, dict)
 
     def __init__(self, files: list[Path], folder: Path | None, parent=None, algorithm="sha512", preview_only=False,
-                 exclude: Path | None = None):
+                 exclude: Path | None = None, recursive=True):
         super().__init__(parent)
         self.files = files
         self.folder = folder
@@ -63,6 +64,7 @@ class ChecksumWorker(QThread):
         self.preview_only = preview_only
         # The automatically saved checksum file must not checksum itself.
         self.exclude = exclude
+        self.recursive = recursive
 
     def run(self):
         completed = errors = 0
@@ -77,7 +79,10 @@ class ChecksumWorker(QThread):
                 for root, directories, names in os.walk(self.folder, onerror=walk_error):
                     if self.isInterruptionRequested():
                         raise Cancelled()
-                    directories.sort()
+                    if self.recursive:
+                        directories.sort()
+                    else:
+                        directories.clear()
                     for name in sorted(names):
                         path = Path(root) / name
                         # Avoid devices, FIFOs, and symbolic links when scanning folders.
@@ -200,7 +205,9 @@ class MainWindow(QMainWindow):
         self.copy = QPushButton("Copy results")
         self.save = QPushButton("Save results…")
         self.compare = QPushButton("Load and compare…")
-        for button in (self.select_files, self.select_folder, self.calculate):
+        self.recursive = QCheckBox("Include subfolders")
+        self.recursive.setChecked(config["recursive"])
+        for button in (self.select_files, self.select_folder, self.recursive, self.calculate):
             buttons.addWidget(button)
         layout.addLayout(buttons)
         self.auto_save = QCheckBox("Save checksums automatically after completion as")
@@ -251,6 +258,7 @@ class MainWindow(QMainWindow):
         self.compare.clicked.connect(self.load_and_compare)
         self.algorithm.currentTextChanged.connect(self.algorithm_changed)
         self.auto_save.toggled.connect(self.auto_save_toggled)
+        self.recursive.toggled.connect(self.recursive_toggled)
         self.auto_save_name.textChanged.connect(self.save_settings)
         self.retranslate_ui()
         self.current_algorithm = self.algorithm.currentText()
@@ -287,7 +295,9 @@ class MainWindow(QMainWindow):
     def update_selection(self):
         if self.folder is not None:
             text = self.tr_message(
-                "Folder: {path} (including subfolders; symbolic links skipped)", path=self.folder
+                "Folder: {path} (including subfolders; symbolic links skipped)"
+                if self.recursive.isChecked() else
+                "Folder: {path} (without subfolders; symbolic links skipped)", path=self.folder
             )
         elif self.files:
             text = self.tr_message("{count} file(s) selected", count=len(self.files))
@@ -315,6 +325,7 @@ class MainWindow(QMainWindow):
         ):
             widget.setText(self.tr_message(message))
         self.calculate.setText(self.tr_message("Calculate"))
+        self.recursive.setText(self.tr_message("Include subfolders"))
         self.auto_save.setText(self.tr_message("Save checksums automatically after completion as"))
         self.auto_save_name.setAccessibleName(self.tr_message("Checksum file name"))
         self.auto_save_name.setToolTip(self.tr_message(
@@ -341,6 +352,12 @@ class MainWindow(QMainWindow):
         self.save_settings()
         self.reset_results()
 
+    def recursive_toggled(self):
+        self.update_selection()
+        self.save_settings()
+        if self.folder is not None:
+            self.reset_results()
+
     def auto_save_toggled(self, checked):
         self.auto_save_name.setEnabled(checked)
         self.save_settings()
@@ -349,6 +366,7 @@ class MainWindow(QMainWindow):
         if self.settings_loaded:
             save_config({
                 "algorithm": self.algorithm.currentText().lower(),
+                "recursive": self.recursive.isChecked(),
                 "auto_save": self.auto_save.isChecked(),
                 "auto_save_name": self.auto_save_name.text().strip(),
             })
@@ -418,14 +436,14 @@ class MainWindow(QMainWindow):
         self.calculate.setEnabled(bool(self.files) or self.folder is not None)
         self.set_status("Ready")
         if self.folder is not None and preview_folder:
-            for widget in (self.select_files, self.select_folder, self.algorithm):
+            for widget in (self.select_files, self.select_folder, self.algorithm, self.recursive):
                 widget.setEnabled(False)
             self.calculate.setText(self.tr_message("Cancel"))
             self.progress.setRange(0, 0)
             self.set_status("Discovering files…")
             self.preview_files = []
             self.worker = ChecksumWorker(list(self.files), self.folder, self, preview_only=True,
-                                         exclude=self.excluded_path())
+                                         exclude=self.excluded_path(), recursive=self.recursive.isChecked())
             self.worker.result.connect(self.add_preview_result)
             self.worker.summary.connect(self.set_status)
             self.worker.finished.connect(self.preview_finished)
@@ -439,7 +457,7 @@ class MainWindow(QMainWindow):
     def preview_finished(self):
         self.worker.deleteLater()
         self.worker = None
-        for widget in (self.select_files, self.select_folder, self.algorithm, self.calculate):
+        for widget in (self.select_files, self.select_folder, self.algorithm, self.calculate, self.recursive):
             widget.setEnabled(True)
         self.calculate.setText(self.tr_message("Calculate"))
         self.progress.setRange(0, 1)
@@ -471,7 +489,7 @@ class MainWindow(QMainWindow):
                 item.setData(Qt.ItemDataRole.UserRole, "")
         for button in (self.copy, self.save, self.compare):
             button.setEnabled(False)
-        for button in (self.select_files, self.select_folder, self.algorithm):
+        for button in (self.select_files, self.select_folder, self.algorithm, self.recursive):
             button.setEnabled(False)
         self.calculate.setText(self.tr_message("Cancel"))
         self.progress.setRange(0, 0)
@@ -481,7 +499,8 @@ class MainWindow(QMainWindow):
         else:
             self.set_total(len(files))
         self.worker = ChecksumWorker(
-            files, folder, self, algorithm=self.algorithm.currentText().lower(), exclude=excluded
+            files, folder, self, algorithm=self.algorithm.currentText().lower(), exclude=excluded,
+            recursive=self.recursive.isChecked(),
         )
         self.worker.discovered.connect(self.set_total)
         self.worker.result.connect(self.add_result)
@@ -536,7 +555,7 @@ class MainWindow(QMainWindow):
         self.taskbar.update()
         self.worker.deleteLater()
         self.worker = None
-        for button in (self.select_files, self.select_folder, self.calculate, self.algorithm):
+        for button in (self.select_files, self.select_folder, self.calculate, self.algorithm, self.recursive):
             button.setEnabled(True)
         self.calculate.setText(self.tr_message("Calculate"))
         self.copy.setEnabled(self.table.rowCount() > 0)

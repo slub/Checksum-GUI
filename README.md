@@ -3,7 +3,9 @@
 An intuitive Python 3.10+/Qt6 desktop app for calculating SHA512, SHA1 or MD5
 checksums of multiple files or all files inside a directory.
 Changing the algorithm or selecting new files/folder clears previous results.
-Selecting a folder scans it in the background and lists its files, including subfolders, before you click Calculate. Symbolic links are skipped.
+Selecting a folder scans it in the background and lists its files before you click Calculate.
+"Include subfolders" (enabled by default) controls whether subfolders are scanned
+recursively; changing it rescans the selected folder. Symbolic links are skipped.
 
 Pass files or one folder on the command line to start calculating automatically:
 
@@ -40,7 +42,7 @@ overwriting an existing file of the same name.
 
 All checksums are written in uppercase, and saved files always use LF line endings.
 
-The selected algorithm and auto-save settings are stored in `chksmg.json`
+The selected algorithm, subfolder and auto-save settings are stored in `chksmg.json`
 in `~/.config` (or `$XDG_CONFIG_HOME`), on Windows in `%APPDATA%` (`AppData\Roaming`).
 
 "Save results…" exports successful checksums and the paths displayed in the table

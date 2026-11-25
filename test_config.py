@@ -42,7 +42,7 @@ class ConfigAndAutoSaveTests(unittest.TestCase):
         self.assertIsNone(window.worker)
 
     def test_defaults_and_invalid_config(self):
-        self.assertEqual(config.load_config(), {"algorithm": "sha512", "auto_save": False,
+        self.assertEqual(config.load_config(), {"algorithm": "sha512", "recursive": True, "auto_save": False,
                                                 "auto_save_name": "checksums.sha512"})
         config.CONFIG_PATH.write_text('{"algorithm": "crc", "auto_save": "yes", "auto_save_name": 3}')
         self.assertEqual(config.load_config()["algorithm"], "sha512")
@@ -59,7 +59,7 @@ class ConfigAndAutoSaveTests(unittest.TestCase):
         self.assertTrue(window.auto_save_name.isEnabled())
         window.close()
         stored = json.loads(config.CONFIG_PATH.read_text())
-        self.assertEqual(stored, {"algorithm": "md5", "auto_save": True, "auto_save_name": "checksums.md5"})
+        self.assertEqual(stored, {"algorithm": "md5", "recursive": True, "auto_save": True, "auto_save_name": "checksums.md5"})
         self.assertNotIn(b"\r\n", config.CONFIG_PATH.read_bytes())
 
         window = MainWindow()
@@ -113,6 +113,29 @@ class ConfigAndAutoSaveTests(unittest.TestCase):
         self.run_calculation(window)
         self.assertEqual(window.table.rowCount(), 2)
         self.assertEqual(len(target.read_text().splitlines()), 2)
+        window.close()
+
+    def test_recursive_option(self):
+        folder = self.root / "data"
+        (folder / "nested").mkdir(parents=True)
+        (folder / "nested" / "b").write_bytes(b"abc")
+        (folder / "a").write_bytes(b"def")
+        window = MainWindow()
+        self.assertTrue(window.recursive.isChecked())
+        window.folder = folder
+        window.reset_results()
+        self.wait_for_preview(window)
+        self.assertEqual(window.table.rowCount(), 2)
+        window.recursive.setChecked(False)
+        self.wait_for_preview(window)
+        self.assertEqual(window.table.rowCount(), 1)
+        self.assertIn("without subfolders", window.selection.text())
+        self.run_calculation(window)
+        self.assertEqual(window.results_text(), hashlib.sha512(b"def").hexdigest().upper() + "  a")
+        window.close()
+        self.assertFalse(config.load_config()["recursive"])
+        window = MainWindow()
+        self.assertFalse(window.recursive.isChecked())
         window.close()
 
     def test_no_auto_save_when_disabled_or_cancelled(self):
