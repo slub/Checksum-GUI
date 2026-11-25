@@ -34,4 +34,4 @@ def checksum_file(
                 last_percent = percent
     if progress is not None:
         progress(100)
-    return digest.hexdigest()
+    return digest.hexdigest().upper()

@@ -11,6 +11,21 @@ from PyQt6.QtWidgets import QApplication
 from checksums import Cancelled, checksum_file
 from main import ChecksumWorker, MainWindow, VERSION, parse_arguments
 from taskbar import TaskbarProgress
+import config
+
+
+_config_directory = None
+
+
+def setUpModule():
+    """Never read or write the real configuration file in the user's home directory."""
+    global _config_directory
+    _config_directory = tempfile.TemporaryDirectory()
+    config.CONFIG_PATH = Path(_config_directory.name) / "config.json"
+
+
+def tearDownModule():
+    _config_directory.cleanup()
 
 
 class ChecksumTests(unittest.TestCase):
@@ -122,7 +137,7 @@ class ChecksumTests(unittest.TestCase):
                     walk.assert_not_called()
                     reset_rows.assert_not_called()
                 self.assertEqual(window.table.rowCount(), 1)
-                self.assertEqual(window.table.item(0, 1).text(), hashlib.sha512(b"abc").hexdigest())
+                self.assertEqual(window.table.item(0, 1).text(), hashlib.sha512(b"abc").hexdigest().upper())
             window.close()
 
     def test_worker_lists_all_files_before_hashing(self):
@@ -199,7 +214,7 @@ class ChecksumTests(unittest.TestCase):
                         self.fail("Automatic calculation did not complete")
                     self.assertEqual(window.table.rowCount(), 1)
                     self.assertEqual(window.table.item(0, 1).text(),
-                                     hashlib.md5(b"abc", usedforsecurity=False).hexdigest())
+                                     hashlib.md5(b"abc", usedforsecurity=False).hexdigest().upper())
                     window.close()
         window = MainWindow(parse_arguments([]).paths)
         app.processEvents()
@@ -246,12 +261,12 @@ class ChecksumTests(unittest.TestCase):
             path = Path(directory) / "data"
             for content in (b"", b"abc", b"abcdef" * 400_000):
                 path.write_bytes(content)
-                self.assertEqual(checksum_file(path), hashlib.sha512(content).hexdigest())
+                self.assertEqual(checksum_file(path), hashlib.sha512(content).hexdigest().upper())
                 for algorithm in ("sha1", "md5", "sha512"):
                     with self.subTest(algorithm=algorithm, size=len(content)):
                         self.assertEqual(
                             checksum_file(path, algorithm),
-                            hashlib.new(algorithm, content, usedforsecurity=False).hexdigest(),
+                            hashlib.new(algorithm, content, usedforsecurity=False).hexdigest().upper(),
                         )
 
     def test_cancellation(self):
@@ -294,11 +309,11 @@ class ChecksumTests(unittest.TestCase):
             window.taskbar.update.assert_any_call(0, 2, active=True)
             window.taskbar.update.assert_any_call(2, 2, active=True)
             window.taskbar.update.assert_called_with()
-            self.assertEqual(window.table.item(1, 1).text(), hashlib.md5(b"abc", usedforsecurity=False).hexdigest())
+            self.assertEqual(window.table.item(1, 1).text(), hashlib.md5(b"abc", usedforsecurity=False).hexdigest().upper())
             self.assertIn("1 error(s)", window.status.text())
             self.assertTrue(window.calculate.isEnabled())
             window.copy_results()
-            self.assertIn(hashlib.md5(b"abc", usedforsecurity=False).hexdigest(), app.clipboard().text())
+            self.assertIn(hashlib.md5(b"abc", usedforsecurity=False).hexdigest().upper(), app.clipboard().text())
             self.assertTrue(window.algorithm.isEnabled())
             self.assertEqual(window.table.horizontalHeaderItem(1).text(), "MD5")
             previous_results = window.results_text()

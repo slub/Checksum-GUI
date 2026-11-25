@@ -7,6 +7,21 @@ from PyQt6.QtWidgets import QApplication, QTableWidget
 
 from main import MainWindow
 from results import compare_results, parse_results
+import config
+
+
+_config_directory = None
+
+
+def setUpModule():
+    """Never read or write the real configuration file in the user's home directory."""
+    global _config_directory
+    _config_directory = tempfile.TemporaryDirectory()
+    config.CONFIG_PATH = Path(_config_directory.name) / "config.json"
+
+
+def tearDownModule():
+    _config_directory.cleanup()
 
 
 class ResultsTests(unittest.TestCase):
@@ -14,7 +29,7 @@ class ResultsTests(unittest.TestCase):
         for algorithm, length in (("MD5", 32), ("SHA1", 40), ("SHA512", 128)):
             with self.subTest(algorithm=algorithm):
                 self.assertEqual(parse_results(f"{'A' * length}  nested/a file ü \r\n\n"),
-                                 (algorithm, [("nested/a file ü ", "a" * length)]))
+                                 (algorithm, [("nested/a file ü ", "A" * length)]))
 
     def test_invalid_results(self):
         for text in ("", "\n", "invalid", "z" * 32 + "  file", "a" * 32 + "  ",

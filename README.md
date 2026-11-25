@@ -32,6 +32,17 @@ counts processed files. Cancel preserves completed results; unreadable files
 show an error and do not stop the remaining work. Copy results copies successful
 checksums and the file path to the clipboard. Avoid modifying files during hashing.
 
+Enable "Save checksums automatically after completion as" to write the results
+after every calculation that finishes without being cancelled. The file name
+defaults to `checksums.<algorithm>`. The file is saved in the selected folder
+(and skipped when that folder is scanned), or next to the first selected file,
+overwriting an existing file of the same name.
+
+All checksums are written in uppercase, and saved files always use LF line endings.
+
+The selected algorithm and auto-save settings are stored in `chksmg.json`
+in `~/.config` (or `$XDG_CONFIG_HOME`), on Windows in `%APPDATA%` (`AppData\Roaming`).
+
 "Save results…" exports successful checksums and the paths displayed in the table
 to a UTF-8 text file, one result per line. Selected files use filenames only;
 folder results use paths relative to the selected folder.

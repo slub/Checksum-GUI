@@ -10,7 +10,7 @@ from PyQt6.QtGui import QAction, QIcon, QKeySequence
 from PyQt6.QtWidgets import (
     QApplication, QFileDialog, QHBoxLayout, QHeaderView, QLabel, QMainWindow,
     QProgressBar, QPushButton, QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget,
-    QAbstractItemView, QComboBox, QMessageBox, QDialog, QDialogButtonBox,
+    QAbstractItemView, QComboBox, QMessageBox, QDialog, QDialogButtonBox, QCheckBox, QLineEdit,
 )
 
 from checksums import Cancelled, checksum_file
@@ -18,6 +18,7 @@ from translations import LANGUAGES, translate
 from taskbar import TaskbarProgress
 from notifications import DesktopNotifications
 from results import parse_results, compare_results
+from config import default_auto_save_name, load_config, save_config
 
 
 VERSION = "2.0.0"
@@ -26,12 +27,21 @@ def parse_arguments(argv=None):
     parser = argparse.ArgumentParser(description="Calculate checksums for files or a folder.")
     parser.add_argument("paths", nargs="*", type=Path, help="Files or one folder (including subfolders)")
     parser.add_argument("-a", "--algorithm", type=str.lower,
-                        choices=("sha512", "sha1", "md5"), default="sha512")
+                        choices=("sha512", "sha1", "md5"), default=None,
+                        help="Defaults to the last algorithm used in the GUI")
     args = parser.parse_args(argv)
     args.paths = list(dict.fromkeys(path.absolute() for path in args.paths))
     if any(path.is_dir() for path in args.paths) and len(args.paths) != 1:
         parser.error("Supply either (multiple) files or a single folder.")
     return args
+
+FINISHED_MESSAGE = "Finished: {completed} file(s) calculated, {errors} error(s)."
+
+
+def write_results(path: Path, text: str):
+    # Always LF line endings, also on Windows.
+    path.write_text(text + "\n", encoding="utf-8", newline="\n")
+
 
 def detect_language():
     language = QLocale.system().name().split("_")[0]
@@ -44,12 +54,15 @@ class ChecksumWorker(QThread):
     progress = pyqtSignal(int)
     summary = pyqtSignal(str, dict)
 
-    def __init__(self, files: list[Path], folder: Path | None, parent=None, algorithm="sha512", preview_only=False):
+    def __init__(self, files: list[Path], folder: Path | None, parent=None, algorithm="sha512", preview_only=False,
+                 exclude: Path | None = None):
         super().__init__(parent)
         self.files = files
         self.folder = folder
         self.algorithm = algorithm
         self.preview_only = preview_only
+        # The automatically saved checksum file must not checksum itself.
+        self.exclude = exclude
 
     def run(self):
         completed = errors = 0
@@ -68,7 +81,7 @@ class ChecksumWorker(QThread):
                     for name in sorted(names):
                         path = Path(root) / name
                         # Avoid devices, FIFOs, and symbolic links when scanning folders.
-                        if not path.is_symlink() and path.is_file():
+                        if not path.is_symlink() and path.is_file() and path != self.exclude:
                             files.append(path)
             self.discovered.emit(len(files))
             if self.preview_only or self.folder is not None:
@@ -100,7 +113,7 @@ class ChecksumWorker(QThread):
                     self.result.emit(str(path), "", str(error))
                     raise
                 self.progress.emit(index)
-            self.summary.emit("Finished: {completed} file(s) calculated, {errors} error(s).", dict(completed=completed, errors=errors))
+            self.summary.emit(FINISHED_MESSAGE, dict(completed=completed, errors=errors))
         except Cancelled:
             self.summary.emit("Cancelled: {completed} file(s) calculated, {errors} error(s).", dict(completed=completed, errors=errors))
         except Exception as error:
@@ -148,8 +161,11 @@ class FileDropTable(QTableWidget):
 
 
 class MainWindow(QMainWindow):
-    def __init__(self, paths=None, algorithm="sha512"):
+    def __init__(self, paths=None, algorithm=None):
         super().__init__()
+        config = load_config()
+        algorithm = algorithm or config["algorithm"]
+        self.settings_loaded = False
         self.taskbar = TaskbarProgress(self)
         QApplication.instance().aboutToQuit.connect(self.taskbar.close)
         self.files: list[Path] = []
@@ -187,6 +203,10 @@ class MainWindow(QMainWindow):
         for button in (self.select_files, self.select_folder, self.calculate):
             buttons.addWidget(button)
         layout.addLayout(buttons)
+        self.auto_save = QCheckBox("Save checksums automatically after completion as")
+        self.auto_save.setChecked(config["auto_save"])
+        self.auto_save_name = QLineEdit(config["auto_save_name"])
+        self.auto_save_name.setEnabled(self.auto_save.isChecked())
         self.selection = QLabel("Select files or a folder to begin, or drag-and-drop files onto the the table or the executable itself.")
         self.selection.setWordWrap(True)
         layout.addWidget(self.selection)
@@ -210,8 +230,11 @@ class MainWindow(QMainWindow):
         self.progress.setValue(0)
         layout.addWidget(self.progress)
         self.status = QLabel("Ready")
+        self.status.setWordWrap(True)
+        layout.addWidget(self.status)
         results_buttons = QHBoxLayout()
-        results_buttons.addWidget(self.status, 1)
+        results_buttons.addWidget(self.auto_save)
+        results_buttons.addWidget(self.auto_save_name, 1)
         results_buttons.addWidget(self.copy)
         results_buttons.addWidget(self.save)
         results_buttons.addWidget(self.compare)
@@ -227,8 +250,13 @@ class MainWindow(QMainWindow):
         self.save.clicked.connect(self.save_results)
         self.compare.clicked.connect(self.load_and_compare)
         self.algorithm.currentTextChanged.connect(self.algorithm_changed)
+        self.auto_save.toggled.connect(self.auto_save_toggled)
+        self.auto_save_name.textChanged.connect(self.save_settings)
         self.retranslate_ui()
+        self.current_algorithm = self.algorithm.currentText()
         self.algorithm.setCurrentText(algorithm.upper())
+        # Algorithms passed on the command line apply only to this session.
+        self.settings_loaded = True
         if paths:
             if len(paths) == 1 and paths[0].is_dir():
                 self.folder = paths[0]
@@ -287,6 +315,10 @@ class MainWindow(QMainWindow):
         ):
             widget.setText(self.tr_message(message))
         self.calculate.setText(self.tr_message("Calculate"))
+        self.auto_save.setText(self.tr_message("Save checksums automatically after completion as"))
+        self.auto_save_name.setAccessibleName(self.tr_message("Checksum file name"))
+        self.auto_save_name.setToolTip(self.tr_message(
+            "Saved in the selected folder, or next to the first selected file"))
         self.table.setHorizontalHeaderLabels([
             self.tr_message("File"), self.algorithm.currentText(), self.tr_message("Status")
         ])
@@ -301,8 +333,45 @@ class MainWindow(QMainWindow):
             item.setToolTip(text)
 
     def algorithm_changed(self, name):
+        # Follow the algorithm unless the user chose a custom file name.
+        if self.auto_save_name.text().strip() in ("", default_auto_save_name(self.current_algorithm)):
+            self.auto_save_name.setText(default_auto_save_name(name))
+        self.current_algorithm = name
         self.table.setHorizontalHeaderLabels([self.tr_message("File"), name, self.tr_message("Status")])
+        self.save_settings()
         self.reset_results()
+
+    def auto_save_toggled(self, checked):
+        self.auto_save_name.setEnabled(checked)
+        self.save_settings()
+
+    def save_settings(self):
+        if self.settings_loaded:
+            save_config({
+                "algorithm": self.algorithm.currentText().lower(),
+                "auto_save": self.auto_save.isChecked(),
+                "auto_save_name": self.auto_save_name.text().strip(),
+            })
+
+    def auto_save_path(self) -> Path | None:
+        if not self.auto_save.isChecked():
+            return None
+        name = self.auto_save_name.text().strip() or default_auto_save_name(self.algorithm.currentText())
+        if self.folder is not None:
+            return self.folder / name
+        return self.files[0].parent / name if self.files else None
+
+    def excluded_path(self) -> Path | None:
+        return self.auto_save_path() if self.folder is not None else None
+
+    def remove_result(self, path):
+        row = self.result_rows.pop(path, None)
+        if row is None:
+            return
+        self.table.removeRow(row)
+        for other, other_row in self.result_rows.items():
+            if other_row > row:
+                self.result_rows[other] = other_row - 1
 
     def choose_files(self):
         names, _ = QFileDialog.getOpenFileNames(self, self.tr_message("Select files"))
@@ -355,7 +424,8 @@ class MainWindow(QMainWindow):
             self.progress.setRange(0, 0)
             self.set_status("Discovering files…")
             self.preview_files = []
-            self.worker = ChecksumWorker(list(self.files), self.folder, self, preview_only=True)
+            self.worker = ChecksumWorker(list(self.files), self.folder, self, preview_only=True,
+                                         exclude=self.excluded_path())
             self.worker.result.connect(self.add_preview_result)
             self.worker.summary.connect(self.set_status)
             self.worker.finished.connect(self.preview_finished)
@@ -386,6 +456,13 @@ class MainWindow(QMainWindow):
     def start(self):
         files = list(self.preview_files if self.preview_files is not None else self.files)
         folder = self.folder if self.preview_files is None else None
+        excluded = self.excluded_path()
+        if excluded is not None and excluded in files:
+            # Auto-save was enabled or renamed after the folder had been listed.
+            files.remove(excluded)
+            if self.preview_files is not None:
+                self.preview_files.remove(excluded)
+            self.remove_result(str(excluded))
         for row in range(self.table.rowCount()):
             for column in (1, 2):
                 item = self.table.item(row, column)
@@ -404,7 +481,7 @@ class MainWindow(QMainWindow):
         else:
             self.set_total(len(files))
         self.worker = ChecksumWorker(
-            files, folder, self, algorithm=self.algorithm.currentText().lower()
+            files, folder, self, algorithm=self.algorithm.currentText().lower(), exclude=excluded
         )
         self.worker.discovered.connect(self.set_total)
         self.worker.result.connect(self.add_result)
@@ -450,6 +527,7 @@ class MainWindow(QMainWindow):
             self.set_status("Cancelling…")
 
     def finished(self):
+        self.auto_save_results()
         message, values = self.status_message
         if not self.close_pending and not self.isActiveWindow():
             self.notifications.show(
@@ -468,6 +546,20 @@ class MainWindow(QMainWindow):
             self.progress.setRange(0, 1)
         if self.close_pending:
             self.close()
+
+    def auto_save_results(self):
+        message, values = self.status_message
+        path = self.auto_save_path()
+        text = self.results_text()
+        if path is None or not text or message != FINISHED_MESSAGE or self.close_pending:
+            return
+        try:
+            write_results(path, text)
+        except OSError as error:
+            self.set_status(FINISHED_MESSAGE + " Could not save checksums to {path}: {error}",
+                            dict(values, path=path, error=error))
+        else:
+            self.set_status(FINISHED_MESSAGE + " Checksums saved to {path}", dict(values, path=path))
 
     def results_text(self):
         rows = []
@@ -500,7 +592,7 @@ class MainWindow(QMainWindow):
         if not name:
             return
         try:
-            Path(name).write_text(text + "\n", encoding="utf-8")
+            write_results(Path(name), text)
         except OSError as error:
             QMessageBox.warning(self, self.tr_message("Could not save results"), str(error))
             return

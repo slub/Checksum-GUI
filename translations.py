@@ -55,6 +55,11 @@ CATALOGS = {
         "Text files (*.txt);;All files (*)": "Textdateien (*.txt);;Alle Dateien (*)",
         "Could not save results": "Ergebnisse konnten nicht gespeichert werden",
         "Results saved to {path}": "Ergebnisse gespeichert unter {path}",
+        "Save checksums automatically after completion as": "Prüfsummen nach Abschluss automatisch speichern als",
+        "Checksum file name": "Dateiname der Prüfsummendatei",
+        "Saved in the selected folder, or next to the first selected file": "Wird im ausgewählten Ordner oder neben der ersten ausgewählten Datei gespeichert",
+        "Finished: {completed} file(s) calculated, {errors} error(s). Checksums saved to {path}": "Fertig: {completed} Datei(en) berechnet, {errors} Fehler. Prüfsummen gespeichert unter {path}",
+        "Finished: {completed} file(s) calculated, {errors} error(s). Could not save checksums to {path}: {error}": "Fertig: {completed} Datei(en) berechnet, {errors} Fehler. Prüfsummen konnten nicht unter {path} gespeichert werden: {error}",
     }
 }
 
