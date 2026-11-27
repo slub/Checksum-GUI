@@ -58,11 +58,13 @@ class ResultsTests(unittest.TestCase):
         before = window.results_text()
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "results.txt"
-            path.write_text(before + "\n", encoding="utf-8-sig")
+            path.write_text("aA" * 16 + "  file\n", encoding="utf-8-sig")
             with patch("main.QFileDialog.getOpenFileName", return_value=(str(path), "")):
                 def inspect(dialog):
                     table = dialog.findChild(QTableWidget)
                     self.assertEqual(table.rowCount(), 1)
+                    self.assertEqual(table.item(0, 1).text(), "A" * 32)
+                    self.assertEqual(table.item(0, 2).text(), "aA" * 16)
                     self.assertEqual(table.item(0, 3).text(), "Match")
                 with patch("main.QDialog.exec", new=inspect):
                     window.load_and_compare()

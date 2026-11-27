@@ -198,6 +198,8 @@ class MainWindow(QMainWindow):
         self.algorithm_label = QLabel("Algorithm:")
         buttons.addWidget(self.algorithm_label)
         buttons.addWidget(self.algorithm)
+        self.uppercase = QCheckBox("Uppercase checksums")
+        self.uppercase.setChecked(config["uppercase"])
         self.calculate = QPushButton("Calculate")
         calculate_font = self.calculate.font()
         calculate_font.setBold(True)
@@ -210,7 +212,8 @@ class MainWindow(QMainWindow):
         for button in (self.select_files, self.select_folder, self.recursive, self.calculate):
             buttons.addWidget(button)
         layout.addLayout(buttons)
-        self.auto_save = QCheckBox("Save checksums automatically after completion as")
+        layout.addWidget(self.uppercase, alignment=Qt.AlignmentFlag.AlignLeft)
+        self.auto_save = QCheckBox("Save automatically after completion as")
         self.auto_save.setChecked(config["auto_save"])
         self.auto_save_name = QLineEdit(config["auto_save_name"])
         self.auto_save_name.setEnabled(self.auto_save.isChecked())
@@ -258,6 +261,7 @@ class MainWindow(QMainWindow):
         self.compare.clicked.connect(self.load_and_compare)
         self.algorithm.currentTextChanged.connect(self.algorithm_changed)
         self.auto_save.toggled.connect(self.auto_save_toggled)
+        self.uppercase.toggled.connect(self.checksum_case_toggled)
         self.recursive.toggled.connect(self.recursive_toggled)
         self.auto_save_name.textChanged.connect(self.save_settings)
         self.retranslate_ui()
@@ -325,8 +329,9 @@ class MainWindow(QMainWindow):
         ):
             widget.setText(self.tr_message(message))
         self.calculate.setText(self.tr_message("Calculate"))
+        self.uppercase.setText(self.tr_message("Uppercase checksums"))
         self.recursive.setText(self.tr_message("Include subfolders"))
-        self.auto_save.setText(self.tr_message("Save checksums automatically after completion as"))
+        self.auto_save.setText(self.tr_message("Save automatically after completion as"))
         self.auto_save_name.setAccessibleName(self.tr_message("Checksum file name"))
         self.auto_save_name.setToolTip(self.tr_message(
             "Saved in the selected folder, or next to the first selected file"))
@@ -358,6 +363,17 @@ class MainWindow(QMainWindow):
         if self.folder is not None:
             self.reset_results()
 
+    def format_checksum(self, digest):
+        return digest.upper() if self.uppercase.isChecked() else digest.lower()
+
+    def checksum_case_toggled(self):
+        for row in range(self.table.rowCount()):
+            item = self.table.item(row, 1)
+            digest = self.format_checksum(item.text())
+            item.setText(digest)
+            item.setToolTip(digest)
+        self.save_settings()
+
     def auto_save_toggled(self, checked):
         self.auto_save_name.setEnabled(checked)
         self.save_settings()
@@ -367,6 +383,7 @@ class MainWindow(QMainWindow):
             save_config({
                 "algorithm": self.algorithm.currentText().lower(),
                 "recursive": self.recursive.isChecked(),
+                "uppercase": self.uppercase.isChecked(),
                 "auto_save": self.auto_save.isChecked(),
                 "auto_save_name": self.auto_save_name.text().strip(),
             })
@@ -527,6 +544,7 @@ class MainWindow(QMainWindow):
                 display_path = str(file_path.relative_to(self.folder))
             except ValueError:
                 pass
+        digest = self.format_checksum(digest)
         for column, value in enumerate((display_path, digest, status)):
             if column == 2 and status in ("OK", "Cancelled"):
                 value = self.tr_message(status)

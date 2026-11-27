@@ -17,7 +17,7 @@ def parse_results(text):
         if algorithm is not None and current_algorithm != algorithm:
             raise ValueError("The results file contains multiple checksum algorithms.")
         algorithm = current_algorithm
-        records.append((match[2], match[1].upper()))
+        records.append((match[2], match[1]))
     if not records:
         raise ValueError("The results file contains no checksums.")
     return algorithm, records

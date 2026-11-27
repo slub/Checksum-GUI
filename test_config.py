@@ -42,7 +42,7 @@ class ConfigAndAutoSaveTests(unittest.TestCase):
         self.assertIsNone(window.worker)
 
     def test_defaults_and_invalid_config(self):
-        self.assertEqual(config.load_config(), {"algorithm": "sha512", "recursive": True, "auto_save": False,
+        self.assertEqual(config.load_config(), {"algorithm": "sha512", "recursive": True, "uppercase": True, "auto_save": False,
                                                 "auto_save_name": "checksums.sha512"})
         config.CONFIG_PATH.write_text('{"algorithm": "crc", "auto_save": "yes", "auto_save_name": 3}')
         self.assertEqual(config.load_config()["algorithm"], "sha512")
@@ -59,7 +59,7 @@ class ConfigAndAutoSaveTests(unittest.TestCase):
         self.assertTrue(window.auto_save_name.isEnabled())
         window.close()
         stored = json.loads(config.CONFIG_PATH.read_text())
-        self.assertEqual(stored, {"algorithm": "md5", "recursive": True, "auto_save": True, "auto_save_name": "checksums.md5"})
+        self.assertEqual(stored, {"algorithm": "md5", "recursive": True, "uppercase": True, "auto_save": True, "auto_save_name": "checksums.md5"})
         self.assertNotIn(b"\r\n", config.CONFIG_PATH.read_bytes())
 
         window = MainWindow()
@@ -114,6 +114,25 @@ class ConfigAndAutoSaveTests(unittest.TestCase):
         self.assertEqual(window.table.rowCount(), 2)
         self.assertEqual(len(target.read_text().splitlines()), 2)
         window.close()
+
+    def test_checksum_case_toggle(self):
+        window = MainWindow(algorithm="md5")
+        self.addCleanup(window.close)
+        window.add_result("/some/file", "Ab12" * 8, "OK")
+        window.uppercase.setChecked(False)
+        self.assertEqual(window.results_text(), "ab12" * 8 + "  file")
+        self.assertEqual(window.table.item(0, 1).toolTip(), "ab12" * 8)
+        window.table.selectRow(0)
+        window.copy_selected_checksums()
+        self.assertEqual(self.app.clipboard().text(), "ab12" * 8)
+        window.add_result("/some/next", "CD34" * 8, "OK")
+        self.assertEqual(window.table.item(1, 1).text(), "cd34" * 8)
+        restored = MainWindow()
+        self.addCleanup(restored.close)
+        self.assertFalse(restored.uppercase.isChecked())
+        window.uppercase.setChecked(True)
+        self.assertEqual(window.table.item(0, 1).text(), "AB12" * 8)
+        self.assertEqual(window.table.item(1, 1).text(), "CD34" * 8)
 
     def test_recursive_option(self):
         folder = self.root / "data"
