@@ -58,3 +58,29 @@ so "Saved only" does not necessarily mean a file was deleted.
 ## Tests
 
 Run checks with `QT_QPA_PLATFORM=offscreen python3 -m unittest -v`.
+
+## Build installers
+
+Both scripts read `VERSION` from `main.py` and place installers in `installer/dist/`.
+
+### Debian
+
+Requires `python3` and `dpkg-deb` (from `dpkg`). No root privileges are needed to build:
+
+```sh
+./installer/build-debian.sh
+sudo apt install ./installer/dist/chksmg.deb
+```
+
+### Windows
+
+Run on Windows with x64 Python 3.10+ and Inno Setup 6.3 or newer installed:
+
+```powershell
+python -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt pyinstaller
+.\installer\build-windows.ps1 -Python .\.venv\Scripts\python.exe
+```
+
+The script uses `chksmg.windows.spec` to bundle the application and Qt, then
+builds `installer/dist/chksmg-setup.exe` with Inno Setup.

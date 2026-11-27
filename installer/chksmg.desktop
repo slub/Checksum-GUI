@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Checksum Calculator
+Name[de]=Prüfsummenrechner
+Exec=chksmg %F
+Icon=/usr/share/chksmg/icon.ico
+Terminal=false
+Categories=Utility;
+Keywords=checksum;hash;SHA512;SHA1;MD5;
+MimeType=inode/directory;application/*;image/*;video/*;text/*;
