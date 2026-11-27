@@ -24,7 +24,7 @@ def default_auto_save_name(algorithm: str) -> str:
 
 def load_config() -> dict:
     """Return validated settings; missing or invalid values fall back to defaults."""
-    config = {"algorithm": "sha512", "recursive": True, "uppercase": True, "auto_save": False, "auto_save_name": ""}
+    config = {"algorithm": "sha512", "recursive": True, "uppercase": True, "auto_save": False, "auto_save_per_directory": False, "auto_save_name": ""}
     try:
         stored = json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
     except (OSError, ValueError):
@@ -33,13 +33,20 @@ def load_config() -> dict:
         stored = {}
     if str(stored.get("algorithm", "")).lower() in ALGORITHMS:
         config["algorithm"] = stored["algorithm"].lower()
-    for key in ("recursive", "auto_save", "uppercase"):
+    for key in ("recursive", "auto_save", "uppercase", "auto_save_per_directory"):
         if isinstance(stored.get(key), bool):
             config[key] = stored[key]
     if isinstance(stored.get("auto_save_name"), str):
         config["auto_save_name"] = stored["auto_save_name"].strip()
     if not config["auto_save_name"]:
         config["auto_save_name"] = default_auto_save_name(config["algorithm"])
+    for key, length in (("window_size", 2), ("column_widths", 3)):
+        value = stored.get(key)
+        if (isinstance(value, list) and len(value) == length
+                and all(type(size) is int and 0 < size <= 32767 for size in value)):
+            config[key] = value
+    if isinstance(stored.get("window_maximized"), bool):
+        config["window_maximized"] = stored["window_maximized"]
     return config
 
 

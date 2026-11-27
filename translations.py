@@ -6,6 +6,10 @@ English source messages are the fallback. Keep named format placeholders intact.
 LANGUAGES = {"en": "English", "de": "Deutsch"}
 CATALOGS = {
     "de": {
+        "Uses only the file name above; each checksum file lists files from its own directory.": "Verwendet nur den obigen Dateinamen; jede Prüfsummendatei enthält die Dateien ihres eigenen Ordners.",
+        "per directory": "pro Ordner",
+        "Finished: {completed} file(s) calculated, {errors} error(s). Checksums saved in {count} directories.": "Fertig: {completed} Datei(en) berechnet, {errors} Fehler. Prüfsummen in {count} Ordnern gespeichert.",
+        "Finished: {completed} file(s) calculated, {errors} error(s). Could not save checksum files: {errors_detail}": "Fertig: {completed} Datei(en) berechnet, {errors} Fehler. Prüfsummendateien konnten nicht gespeichert werden: {errors_detail}",
         "Checksum Calculator": "Prüfsummenrechner",
         "Language:": "Sprache:",
         "Select files…": "Dateien auswählen…",
@@ -14,7 +18,7 @@ CATALOGS = {
         "Select folder": "Ordner auswählen",
         "Checksum algorithm": "Prüfsummenalgorithmus",
         "Algorithm:": "Algorithmus:",
-        "Uppercase checksums": "Prüfsummen in Großbuchstaben",
+        "Uppercase": "Großbuchstaben",
         "Calculate": "Berechnen",
         "Cancel": "Abbrechen",
         "Cancelling…": "Wird abgebrochen…",

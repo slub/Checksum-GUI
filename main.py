@@ -6,7 +6,7 @@ import sys
 from pathlib import Path
 
 from PyQt6.QtCore import Qt, QThread, QTimer, pyqtSignal, QTranslator, QLibraryInfo, QLocale
-from PyQt6.QtGui import QAction, QIcon, QKeySequence
+from PyQt6.QtGui import QAction, QFontDatabase, QIcon, QKeySequence
 from PyQt6.QtWidgets import (
     QApplication, QFileDialog, QHBoxLayout, QHeaderView, QLabel, QMainWindow,
     QProgressBar, QPushButton, QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget,
@@ -56,13 +56,14 @@ class ChecksumWorker(QThread):
     summary = pyqtSignal(str, dict)
 
     def __init__(self, files: list[Path], folder: Path | None, parent=None, algorithm="sha512", preview_only=False,
-                 exclude: Path | None = None, recursive=True):
+                 exclude: Path | None = None, recursive=True, exclude_name=None):
         super().__init__(parent)
         self.files = files
         self.folder = folder
         self.algorithm = algorithm
         self.preview_only = preview_only
         # The automatically saved checksum file must not checksum itself.
+        self.exclude_name = exclude_name
         self.exclude = exclude
         self.recursive = recursive
 
@@ -86,7 +87,7 @@ class ChecksumWorker(QThread):
                     for name in sorted(names):
                         path = Path(root) / name
                         # Avoid devices, FIFOs, and symbolic links when scanning folders.
-                        if not path.is_symlink() and path.is_file() and path != self.exclude:
+                        if not path.is_symlink() and path.is_file() and path != self.exclude and path.name != self.exclude_name:
                             files.append(path)
             self.discovered.emit(len(files))
             if self.preview_only or self.folder is not None:
@@ -184,7 +185,9 @@ class MainWindow(QMainWindow):
         self.qt_translator = QTranslator(self)
         self.setWindowIcon(QIcon(str(Path(__file__).resolve().with_name("icon.ico"))))
         self.notifications = DesktopNotifications(self)
-        self.resize(1200, 700)
+        self.resize(*config.get("window_size", [1200, 700]))
+        if config.get("window_maximized", False):
+            self.setWindowState(self.windowState() | Qt.WindowState.WindowMaximized)
 
         container = QWidget()
         self.setCentralWidget(container)
@@ -196,9 +199,7 @@ class MainWindow(QMainWindow):
         self.algorithm.addItems(["SHA512", "SHA1", "MD5"])
         self.algorithm.setAccessibleName("Checksum algorithm")
         self.algorithm_label = QLabel("Algorithm:")
-        buttons.addWidget(self.algorithm_label)
-        buttons.addWidget(self.algorithm)
-        self.uppercase = QCheckBox("Uppercase checksums")
+        self.uppercase = QCheckBox("Uppercase")
         self.uppercase.setChecked(config["uppercase"])
         self.calculate = QPushButton("Calculate")
         calculate_font = self.calculate.font()
@@ -209,12 +210,14 @@ class MainWindow(QMainWindow):
         self.compare = QPushButton("Load and compare…")
         self.recursive = QCheckBox("Include subfolders")
         self.recursive.setChecked(config["recursive"])
-        for button in (self.select_files, self.select_folder, self.recursive, self.calculate):
-            buttons.addWidget(button)
+        for widget in (self.algorithm_label, self.algorithm, self.uppercase, self.select_files, self.select_folder, self.recursive, self.calculate):
+            buttons.addWidget(widget)
         layout.addLayout(buttons)
-        layout.addWidget(self.uppercase, alignment=Qt.AlignmentFlag.AlignLeft)
         self.auto_save = QCheckBox("Save automatically after completion as")
         self.auto_save.setChecked(config["auto_save"])
+        self.auto_save_per_directory = QCheckBox("per directory")
+        self.auto_save_per_directory.setChecked(config["auto_save_per_directory"])
+        self.auto_save_per_directory.setEnabled(self.auto_save.isChecked())
         self.auto_save_name = QLineEdit(config["auto_save_name"])
         self.auto_save_name.setEnabled(self.auto_save.isChecked())
         self.selection = QLabel("Select files or a folder to begin, or drag-and-drop files onto the the table or the executable itself.")
@@ -234,6 +237,8 @@ class MainWindow(QMainWindow):
         self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
         self.table.setColumnWidth(0, 135)
         self.table.setColumnWidth(1, 925)
+        for column, width in enumerate(config.get("column_widths", [])):
+            self.table.setColumnWidth(column, width)
         self.table.horizontalHeader().setStretchLastSection(True)
         layout.addWidget(self.table)
         self.progress = QProgressBar()
@@ -245,6 +250,7 @@ class MainWindow(QMainWindow):
         results_buttons = QHBoxLayout()
         results_buttons.addWidget(self.auto_save)
         results_buttons.addWidget(self.auto_save_name, 1)
+        results_buttons.addWidget(self.auto_save_per_directory)
         results_buttons.addWidget(self.copy)
         results_buttons.addWidget(self.save)
         results_buttons.addWidget(self.compare)
@@ -261,6 +267,7 @@ class MainWindow(QMainWindow):
         self.compare.clicked.connect(self.load_and_compare)
         self.algorithm.currentTextChanged.connect(self.algorithm_changed)
         self.auto_save.toggled.connect(self.auto_save_toggled)
+        self.auto_save_per_directory.toggled.connect(self.save_settings)
         self.uppercase.toggled.connect(self.checksum_case_toggled)
         self.recursive.toggled.connect(self.recursive_toggled)
         self.auto_save_name.textChanged.connect(self.save_settings)
@@ -329,9 +336,12 @@ class MainWindow(QMainWindow):
         ):
             widget.setText(self.tr_message(message))
         self.calculate.setText(self.tr_message("Calculate"))
-        self.uppercase.setText(self.tr_message("Uppercase checksums"))
+        self.uppercase.setText(self.tr_message("Uppercase"))
         self.recursive.setText(self.tr_message("Include subfolders"))
         self.auto_save.setText(self.tr_message("Save automatically after completion as"))
+        self.auto_save_per_directory.setText(self.tr_message("per directory"))
+        self.auto_save_per_directory.setToolTip(self.tr_message(
+            "Uses only the file name above; each checksum file lists files from its own directory."))
         self.auto_save_name.setAccessibleName(self.tr_message("Checksum file name"))
         self.auto_save_name.setToolTip(self.tr_message(
             "Saved in the selected folder, or next to the first selected file"))
@@ -376,17 +386,26 @@ class MainWindow(QMainWindow):
 
     def auto_save_toggled(self, checked):
         self.auto_save_name.setEnabled(checked)
+        self.auto_save_per_directory.setEnabled(checked)
         self.save_settings()
 
     def save_settings(self):
         if self.settings_loaded:
             save_config({
+                **load_config(),
                 "algorithm": self.algorithm.currentText().lower(),
                 "recursive": self.recursive.isChecked(),
                 "uppercase": self.uppercase.isChecked(),
                 "auto_save": self.auto_save.isChecked(),
+                "auto_save_per_directory": self.auto_save_per_directory.isChecked(),
                 "auto_save_name": self.auto_save_name.text().strip(),
             })
+
+    def per_directory_name(self):
+        if self.auto_save.isChecked() and self.auto_save_per_directory.isChecked():
+            name = self.auto_save_name.text().strip()
+            return Path(name).name if name and Path(name).name not in ("", ".", "..") else default_auto_save_name(self.algorithm.currentText())
+        return None
 
     def auto_save_path(self) -> Path | None:
         if not self.auto_save.isChecked():
@@ -460,7 +479,8 @@ class MainWindow(QMainWindow):
             self.set_status("Discovering files…")
             self.preview_files = []
             self.worker = ChecksumWorker(list(self.files), self.folder, self, preview_only=True,
-                                         exclude=self.excluded_path(), recursive=self.recursive.isChecked())
+                                         exclude=self.excluded_path(), recursive=self.recursive.isChecked(),
+                                         exclude_name=self.per_directory_name())
             self.worker.result.connect(self.add_preview_result)
             self.worker.summary.connect(self.set_status)
             self.worker.finished.connect(self.preview_finished)
@@ -492,12 +512,13 @@ class MainWindow(QMainWindow):
         files = list(self.preview_files if self.preview_files is not None else self.files)
         folder = self.folder if self.preview_files is None else None
         excluded = self.excluded_path()
-        if excluded is not None and excluded in files:
-            # Auto-save was enabled or renamed after the folder had been listed.
-            files.remove(excluded)
-            if self.preview_files is not None:
-                self.preview_files.remove(excluded)
-            self.remove_result(str(excluded))
+        for path in list(files):
+            if path == excluded or path.name == self.per_directory_name():
+                # Auto-save may have been enabled or renamed after the preview.
+                files.remove(path)
+                if self.preview_files is not None:
+                    self.preview_files.remove(path)
+                self.remove_result(str(path))
         for row in range(self.table.rowCount()):
             for column in (1, 2):
                 item = self.table.item(row, column)
@@ -517,7 +538,7 @@ class MainWindow(QMainWindow):
             self.set_total(len(files))
         self.worker = ChecksumWorker(
             files, folder, self, algorithm=self.algorithm.currentText().lower(), exclude=excluded,
-            recursive=self.recursive.isChecked(),
+            recursive=self.recursive.isChecked(), exclude_name=self.per_directory_name(),
         )
         self.worker.discovered.connect(self.set_total)
         self.worker.result.connect(self.add_result)
@@ -549,6 +570,8 @@ class MainWindow(QMainWindow):
             if column == 2 and status in ("OK", "Cancelled"):
                 value = self.tr_message(status)
             item = QTableWidgetItem(value)
+            if column == 1:
+                item.setFont(QFontDatabase.systemFont(QFontDatabase.SystemFont.FixedFont))
             if column == 2:
                 item.setData(Qt.ItemDataRole.UserRole, status)
             item.setToolTip(path if column == 0 else value)
@@ -590,11 +613,28 @@ class MainWindow(QMainWindow):
         text = self.results_text()
         if path is None or not text or message != FINISHED_MESSAGE or self.close_pending:
             return
-        try:
-            write_results(path, text)
-        except OSError as error:
-            self.set_status(FINISHED_MESSAGE + " Could not save checksums to {path}: {error}",
-                            dict(values, path=path, error=error))
+        outputs = {path: text}
+        name = self.per_directory_name()
+        if name is not None:
+            grouped = {}
+            for row in range(self.table.rowCount()):
+                file_path = Path(self.table.item(row, 0).data(Qt.ItemDataRole.UserRole))
+                digest = self.table.item(row, 1).text()
+                if digest and file_path.name != name:
+                    grouped.setdefault(file_path.parent / name, []).append(f"{digest}  {file_path.name}")
+            outputs = {target: "\n".join(lines) for target, lines in grouped.items()}
+        failures = []
+        for target, content in outputs.items():
+            try:
+                write_results(target, content)
+            except OSError as error:
+                failures.append(f"{target}: {error}")
+        if failures:
+            self.set_status(FINISHED_MESSAGE + " Could not save checksum files: {errors_detail}",
+                            dict(values, errors_detail="; ".join(failures)))
+        elif name is not None:
+            self.set_status(FINISHED_MESSAGE + " Checksums saved in {count} directories.",
+                            dict(values, count=len(outputs)))
         else:
             self.set_status(FINISHED_MESSAGE + " Checksums saved to {path}", dict(values, path=path))
 
@@ -675,6 +715,8 @@ class MainWindow(QMainWindow):
         for row, values in enumerate(rows):
             for column, value in enumerate(values):
                 item = QTableWidgetItem(self.tr_message(value) if column == 3 else value)
+                if column in (1, 2):
+                    item.setFont(QFontDatabase.systemFont(QFontDatabase.SystemFont.FixedFont))
                 item.setToolTip(item.text())
                 table.setItem(row, column, item)
         table.setColumnWidth(0, 250)
@@ -695,12 +737,23 @@ class MainWindow(QMainWindow):
         dialog.exec()
         dialog.deleteLater()
 
+    def save_window_settings(self):
+        settings = load_config()
+        size = self.normalGeometry().size() if self.isMaximized() or self.isMinimized() else self.size()
+        settings.update(
+            window_size=[size.width(), size.height()],
+            window_maximized=self.isMaximized(),
+            column_widths=[self.table.columnWidth(column) for column in range(self.table.columnCount())],
+        )
+        save_config(settings)
+
     def closeEvent(self, event):
         if self.worker is not None:
             self.close_pending = True
             self.stop()
             event.ignore()
         else:
+            self.save_window_settings()
             self.taskbar.update()
             event.accept()
 

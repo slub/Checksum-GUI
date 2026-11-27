@@ -42,7 +42,7 @@ class ConfigAndAutoSaveTests(unittest.TestCase):
         self.assertIsNone(window.worker)
 
     def test_defaults_and_invalid_config(self):
-        self.assertEqual(config.load_config(), {"algorithm": "sha512", "recursive": True, "uppercase": True, "auto_save": False,
+        self.assertEqual(config.load_config(), {"algorithm": "sha512", "recursive": True, "uppercase": True, "auto_save": False, "auto_save_per_directory": False,
                                                 "auto_save_name": "checksums.sha512"})
         config.CONFIG_PATH.write_text('{"algorithm": "crc", "auto_save": "yes", "auto_save_name": 3}')
         self.assertEqual(config.load_config()["algorithm"], "sha512")
@@ -59,7 +59,11 @@ class ConfigAndAutoSaveTests(unittest.TestCase):
         self.assertTrue(window.auto_save_name.isEnabled())
         window.close()
         stored = json.loads(config.CONFIG_PATH.read_text())
-        self.assertEqual(stored, {"algorithm": "md5", "recursive": True, "uppercase": True, "auto_save": True, "auto_save_name": "checksums.md5"})
+        self.assertIn("window_size", stored)
+        self.assertIn("column_widths", stored)
+        for key in ("window_size", "column_widths", "window_maximized"):
+            stored.pop(key)
+        self.assertEqual(stored, {"algorithm": "md5", "recursive": True, "uppercase": True, "auto_save": True, "auto_save_per_directory": False, "auto_save_name": "checksums.md5"})
         self.assertNotIn(b"\r\n", config.CONFIG_PATH.read_bytes())
 
         window = MainWindow()
@@ -133,6 +137,65 @@ class ConfigAndAutoSaveTests(unittest.TestCase):
         window.uppercase.setChecked(True)
         self.assertEqual(window.table.item(0, 1).text(), "AB12" * 8)
         self.assertEqual(window.table.item(1, 1).text(), "CD34" * 8)
+
+    def test_per_directory_auto_save(self):
+        folder = self.root / "data"
+        nested = folder / "nested"
+        nested.mkdir(parents=True)
+        (folder / "a").write_bytes(b"abc")
+        (nested / "b").write_bytes(b"def")
+        window = MainWindow(algorithm="md5")
+        self.addCleanup(window.close)
+        window.folder = folder
+        window.auto_save.setChecked(True)
+        window.auto_save_per_directory.setChecked(True)
+        window.uppercase.setChecked(False)
+        self.run_calculation(window)
+        for directory, filename, content in ((folder, "a", b"abc"), (nested, "b", b"def")):
+            self.assertEqual((directory / "checksums.md5").read_text(),
+                             hashlib.md5(content).hexdigest() + "  " + filename + "\n")
+        window.reset_results()
+        self.wait_for_preview(window)
+        self.assertEqual(window.table.rowCount(), 2)
+        self.run_calculation(window)
+        self.assertEqual(window.table.rowCount(), 2)
+
+        # Explicit file selection across directories also excludes generated files.
+        window.folder = None
+        window.files = [folder / "a", nested / "b", nested / "checksums.md5"]
+        window.reset_results()
+        self.run_calculation(window)
+        self.assertEqual(window.table.rowCount(), 2)
+        self.assertTrue(config.load_config()["auto_save_per_directory"])
+        restored = MainWindow()
+        self.addCleanup(restored.close)
+        self.assertTrue(restored.auto_save_per_directory.isChecked())
+
+    def test_window_and_column_sizes_persist(self):
+        window = MainWindow()
+        window.resize(1400, 800)
+        window.table.setColumnWidth(0, 230)
+        window.table.setColumnWidth(1, 750)
+        window.close()
+        stored = config.load_config()
+        self.assertEqual(stored["window_size"], [1400, 800])
+        self.assertEqual(stored["column_widths"][:2], [230, 750])
+        restored = MainWindow()
+        self.addCleanup(restored.close)
+        self.assertEqual([restored.width(), restored.height()], [1400, 800])
+        self.assertEqual([restored.table.columnWidth(i) for i in range(2)], [230, 750])
+        restored.uppercase.setChecked(False)
+        self.assertEqual(config.load_config()["column_widths"], stored["column_widths"])
+
+    def test_invalid_window_sizes_are_ignored(self):
+        config.CONFIG_PATH.write_text(json.dumps({
+            "window_size": [-1, 700], "column_widths": [100, "wide", 100],
+            "window_maximized": "yes",
+        }))
+        settings = config.load_config()
+        self.assertNotIn("window_size", settings)
+        self.assertNotIn("column_widths", settings)
+        self.assertNotIn("window_maximized", settings)
 
     def test_recursive_option(self):
         folder = self.root / "data"
